@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Tanssi Wheel of Fortune</title>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Poppins:wght@400;600&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+  <style>
+    body { font-family: 'Poppins', sans-serif; background: #0D1117; color: #C9D1D9; }
+    .font-orbitron { font-family: 'Orbitron', sans-serif; }
+    .text-glow { text-shadow: 0 0 8px rgba(37, 196, 242, 0.8); }
+    .panel { background: rgba(22,27,34,0.8); backdrop-filter: blur(10px); border: 1px solid #30363D; }
+    .btn-spin { font-family: 'Orbitron', sans-serif; background: #238636; color: white; border:2px solid #2ea043; box-shadow:0 0 20px rgba(46,160,67,0.5); transition: all .2s ease; }
+    .btn-spin:hover:not(:disabled){ background:#2ea043; transform: scale(1.05); }
+    .btn-spin:disabled{ background:#555; border-color:#777; box-shadow:none; cursor:not-allowed; }
+    .wheel-container{ position:relative; width:500px; height:500px; }
+    #wheelCanvas{ transition: transform 5s cubic-bezier(.25,1,.5,1); }
+    .wheel-pointer{ position:absolute; left:50%; top:-10px; transform:translateX(-50%); width:0;height:0; border-left:25px solid transparent; border-right:25px solid transparent; border-top:40px solid #F78166; z-index:10; }
+    .modal-overlay{ background: rgba(13,17,23,0.9); backdrop-filter: blur(5px); }
+    @keyframes shineBackground { 0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%} }
+    .jackpot-background{ animation: shineBackground 5s infinite; background: linear-gradient(-45deg,#FF00C8,#FFD700,#00FFE0,#FF5733); background-size:400% 400%; position:fixed; top:0;left:0;width:100vw;height:100vh;z-index:5;opacity:0.2;pointer-events:none; }
+  </style>
+</head>
+<body class="flex items-center justify-center min-h-screen p-4">
+  <div id="jackpot-bg" class="jackpot-background hidden"></div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 w-full max-w-7xl z-10">
+    <div class="panel rounded-lg p-6 space-y-4 text-center">
+      <img src="images/Tanssi Logo & Icon _Mesa de trabajo 1 copia 7.png" alt="Tanssi Logo" class="h-20 mx-auto mb-4">
+      <h2 class="font-orbitron text-3xl text-glow">Controls</h2>
+      <p class="text-lg text-gray-400">Your Balance</p>
+      <p id="player-balance" class="font-orbitron text-4xl text-green-400">1000 COCO</p>
+      <p class="text-gray-400">Spin Cost</p>
+      <p class="font-orbitron text-xl text-red-400">100 COCO</p>
+      <button id="spin-button" class="w-full py-4 text-2xl rounded-lg btn-spin">SPIN</button>
+    </div>
+
+    <div class="flex items-center justify-center">
+      <div class="wheel-container">
+        <div class="wheel-pointer"></div>
+        <canvas id="wheelCanvas" width="500" height="500"></canvas>
+      </div>
+    </div>
+
+    <div class="panel rounded-lg p-6">
+      <h2 class="font-orbitron text-3xl text-center text-glow mb-6">Prize Inventory</h2>
+      <div id="inventory-list" class="space-y-3 max-h-96 overflow-y-auto pr-2">
+        <p class="text-center text-gray-500">No prizes won yet.</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="prize-modal" class="fixed inset-0 flex items-center justify-center modal-overlay hidden z-20">
+    <div class="panel rounded-lg p-10 text-center max-w-md border-2 border-green-400">
+      <h2 class="font-orbitron text-2xl text-glow mb-4">CONGRATULATIONS!</h2>
+      <p class="text-xl mb-2">You won:</p>
+      <p id="prize-text" class="font-orbitron text-4xl text-yellow-400 mb-8"></p>
+      <button id="close-modal-button" class="font-orbitron bg-gray-600 hover:bg-gray-500 text-white px-8 py-2 rounded-lg">Close</button>
+    </div>
+  </div>
+
+  <div id="gameover-modal" class="fixed inset-0 flex items-center justify-center modal-overlay hidden z-30">
+    <div class="panel rounded-lg p-10 text-center max-w-md border-2 border-red-500">
+      <h2 class="font-orbitron text-2xl text-red-400 mb-4">Game Over</h2>
+      <p class="mb-4">You ran out of COCO. Here's what you won:</p>
+      <ul id="gameover-list" class="text-left mb-6 text-sm max-h-40 overflow-y-auto"></ul>
+      <button onclick="location.reload()" class="font-orbitron bg-red-600 hover:bg-red-500 text-white px-6 py-2 rounded-lg">Restart</button>
+    </div>
+  </div>
+
+  <audio id="spin-sound" src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=" preload="auto"></audio>
+  <audio id="ding-sound" src="data:audio/wav;base64,UklGRlQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=" preload="auto"></audio>
+
+<script>
+const cv = document.getElementById('wheelCanvas');
+const ctx = cv.getContext('2d');
+const spinBtn = document.getElementById('spin-button');
+const bal = document.getElementById('player-balance');
+const invList = document.getElementById('inventory-list');
+const prizeModal = document.getElementById('prize-modal');
+const prizeText = document.getElementById('prize-text');
+const closeBtn = document.getElementById('close-modal-button');
+const gameOverModal = document.getElementById('gameover-modal');
+const gameOverList = document.getElementById('gameover-list');
+const spinSound = document.getElementById('spin-sound');
+const dingSound = document.getElementById('ding-sound');
+const jackpotBg = document.getElementById('jackpot-bg');
+
+const segments = [
+  {color:'#B91C1C',label:'ZONK',type:'lose'},
+  {color:'#1D4ED8',label:'50 COCO',type:'token'},
+  {color:'#16A34A',label:'Role L1',type:'nft'},
+  {color:'#CA8A04',label:'250 COCO',type:'token'},
+  {color:'#6D28D9',label:'Free Spin',type:'special'},
+  {color:'#B91C1C',label:'10 COCO',type:'token'},
+  {color:'#1D4ED8',label:'100 COCO',type:'token'},
+  {color:'#16A34A',label:'Role L2',type:'nft'},
+  {color:'#CA8A04',label:'500 COCO',type:'token'},
+  {color:'#6D28D9',label:'Forkie Ticket',type:'jackpot'},
+  {color:'#1E293B',label:'ZONK',type:'lose'},
+  {color:'#3B82F6',label:'25 COCO',type:'token'},
+  {color:'#10B981',label:'Role L3',type:'nft'},
+  {color:'#F59E0B',label:'150 COCO',type:'token'},
+  {color:'#8B5CF6',label:'Free Spin',type:'special'},
+  {color:'#991B1B',label:'5 COCO',type:'token'},
+  {color:'#2563EB',label:'75 COCO',type:'token'},
+  {color:'#22C55E',label:'Role L2',type:'nft'},
+  {color:'#D97706',label:'300 COCO',type:'token'},
+  {color:'#7C3AED',label:'Forkie Ticket',type:'jackpot'}
+];
+
+const SPIN_COST = 100;
+const num = segments.length;
+const angleSeg = (2*Math.PI)/num;
+const rad = cv.width/2;
+let state={balance:1000, inventory:[]}, spinning=false;
+
+function drawSeg(i){
+  const s=segments[i];
+  const sa=i*angleSeg, ea=sa+angleSeg;
+  ctx.beginPath();
+  ctx.moveTo(rad,rad);
+  ctx.arc(rad,rad,rad-10,sa,ea);
+  ctx.closePath();
+  ctx.fillStyle=s.color;
+  ctx.fill(); ctx.stroke();
+  ctx.save();
+  ctx.translate(rad,rad);
+  ctx.rotate(sa+angleSeg/2);
+  ctx.textAlign='right';
+  ctx.fillStyle='#FFF';
+  ctx.font='bold 18px Poppins';
+  ctx.fillText(s.label,rad-25,10);
+  ctx.restore();
+}
+
+function drawWheel(){
+  ctx.strokeStyle='#30363D'; ctx.lineWidth=2;
+  for(let i=0;i<num;i++) drawSeg(i);
+}
+
+function updateUI(){
+  bal.textContent = `${state.balance} COCO`;
+  invList.innerHTML = '';
+  if(state.inventory.length===0){
+    invList.innerHTML = '<p class="text-center text-gray-500">No prizes won yet.</p>'; return;
+  }
+  state.inventory.forEach(item=>{
+    const div=document.createElement('div');
+    div.className='bg-gray-900 p-3 rounded-lg flex justify-between items-center';
+    div.innerHTML = `<span class="font-semibold">${item.label}</span><span class="text-xs ${item.type==='nft'?'text-purple-400':'text-green-400'}">${item.type.toUpperCase()}</span>`;
+    invList.appendChild(div);
+  });
+}
+
+function showPrize(seg){
+  prizeText.textContent = seg.label;
+  prizeModal.classList.remove('hidden');
+  switch(seg.type){
+    case 'token':
+      state.balance += parseInt(seg.label);
+      break;
+    case 'nft':
+      state.inventory.push(seg);
+      break;
+    case 'special':
+      state.balance += SPIN_COST;
+      break;
+    case 'jackpot':
+      state.balance += 10000;
+      prizeText.textContent = `Forkie Ticket\n+10000 COCO!`;
+      jackpotBg.classList.remove('hidden');
+      break;
+  }
+  dingSound.play();
+  updateUI();
+  if(seg.type!=='lose'){
+    confetti({ particleCount:100, spread:70, origin:{ y:0.6 } });
+  }
+}
+
+function spin(){
+  if(spinning || state.balance < SPIN_COST) return;
+  spinning=true;
+  spinBtn.disabled=true;
+  state.balance -= SPIN_COST;
+  updateUI();
+  spinSound.currentTime = 0; spinSound.play();
+  const rounds = Math.floor(Math.random()*10)+5;
+  const stopAng = Math.random()*(2*Math.PI);
+  const totalRot = rounds*2*Math.PI + stopAng;
+  cv.style.transition = 'transform 5s ease-out';
+  cv.style.transform = `rotate(${totalRot}rad)`;
+
+  setTimeout(()=>{
+    spinning=false;
+    spinBtn.disabled=false;
+    cv.style.transition='none';
+    const final=getFinalAngle(totalRot);
+    cv.style.transform = `rotate(${final}rad)`;
+    const idx = Math.floor(((2*Math.PI - final + (1.5*Math.PI))%(2*Math.PI))/angleSeg);
+    showPrize(segments[idx]);
+    if(state.balance < SPIN_COST){
+      setTimeout(()=>{
+        gameOverList.innerHTML='';
+        if(state.inventory.length===0){
+          gameOverList.innerHTML='<li class="text-gray-400">No prizes won.</li>';
+        } else {
+          state.inventory.forEach(it=>{
+            const li=document.createElement('li');
+            li.textContent = `• ${it.label} (${it.type.toUpperCase()})`;
+            gameOverList.appendChild(li);
+          });
+        }
+        gameOverModal.classList.remove('hidden');
+      },1200);
+    }
+  },5000);
+
+  function getFinalAngle(rot){
+    return rot%(2*Math.PI);
+  }
+}
+
+spinBtn.addEventListener('click',spin);
+closeBtn.addEventListener('click',()=>{
+  prizeModal.classList.add('hidden');
+  jackpotBg.classList.add('hidden');
+});
+
+drawWheel(); updateUI();
+</script>
+</body>
+</html>
